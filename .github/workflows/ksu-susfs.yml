@@ -43,11 +43,11 @@ on:
       ksu_ref:
         description: 'KernelSU-Next tag to build (needs a matching kernelsu/patches patch)'
         required: false
-        default: 'v3.4.1'
+        default: 'v3.4.2'
       susfs_ref:
         description: 'Upstream susfs commit to merge in'
         required: false
-        default: '191339da5db5e9a45a4b011f9f7aa4174a760bae'
+        default: '85ef920ccf27682a2a9089b4676547f691b92828'
       kmi:
         description: 'KMI to build for'
         required: false
@@ -74,9 +74,12 @@ permissions:
 
 env:
   SUSFS_REPO: inforcqb/susfs4ksu-lkm
-  KSU_REF: ${{ inputs.ksu_ref || 'v3.4.1' }}
-  SUSFS_REF: ${{ inputs.susfs_ref || '191339da5db5e9a45a4b011f9f7aa4174a760bae' }}
-  PATCH: kernelsu/patches/KernelSU-Next-v3.4.1-samsung-kdp-rkp-defex.patch
+  KSU_REF: ${{ inputs.ksu_ref || 'v3.4.2' }}
+  SUSFS_REF: ${{ inputs.susfs_ref || '85ef920ccf27682a2a9089b4676547f691b92828' }}
+  # Follows the tag rather than naming one, which is what `ksu-build.yml` does with the same value: a
+  # run for a release nobody has built before used to fail at the patch step with a file that is not
+  # there, and the fix is a name derived from the input rather than an edit to this line.
+  PATCH: kernelsu/patches/KernelSU-Next-${{ inputs.ksu_ref || 'v3.4.2' }}-samsung-kdp-rkp-defex.patch
 
 jobs:
   build:

@@ -119,6 +119,13 @@ jobs:
         run: |
           set -eu
           mkdir -p KernelSU/kernel/susfs
+          # Emptied first, because from v3.4.2 the tag ships this directory itself: upstream vendored
+          # the same project's sources at whatever commit it was on, so the tree already holds a
+          # `patch_memory.c` - the one file below that is deliberately *not* copied - and the link then
+          # finds `phys_from_virt` and `ksu_patch_text` defined twice. Measured on the first v3.4.2 run.
+          # Whatever that tree is, this build is the pin below plus this repository's own two files, and
+          # a leftover from the tag is neither.
+          rm -f KernelSU/kernel/susfs/*
           # Their sources, minus three files:
           #
           #   lsm_hook.c        upstream's security_hook_heads install path; ours is the kprobe route

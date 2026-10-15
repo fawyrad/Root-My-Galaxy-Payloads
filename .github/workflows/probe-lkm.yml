@@ -1,0 +1,89 @@
+name: RKP probe LKM
+
+# The two tests in inforcqb/susfs4ksu-lkm#80 as one module, built for one KMI per run. It is a
+# diagnostic: it reads a hook-list word and writes it back unchanged, so a load changes nothing
+# on the phone whether the store is refused or not. Nothing here loads it anywhere - the module
+# is built, checked and uploaded, and a person decides what runs it.
+#
+# Load it with the loader that carries the susfs module rather than plain `insmod`:
+# `selinux_hooks` is a local kernel symbol, so the name has to be resolved from /proc/kallsyms
+# and the vermagic rewritten, which is what that loader does.
+
+on:
+  workflow_dispatch:
+    inputs:
+      kmi:
+        description: 'KMI to build for'
+        required: false
+        default: 'android15-6.6'
+      ddk_release:
+        description: 'DDK image release'
+        required: false
+        default: '20260828'
+
+permissions:
+  contents: read
+
+env:
+  KMI: ${{ inputs.kmi || 'android15-6.6' }}
+
+jobs:
+  build:
+    name: rkp_probe (${{ inputs.kmi || 'android15-6.6' }})
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/ylarod/ddk-min:${{ inputs.kmi || 'android15-6.6' }}-${{ inputs.ddk_release || '20260828' }}
+      options: --privileged
+    steps:
+      - name: Checkout payloads
+        uses: actions/checkout@v7
+
+      - name: Build rkp_probe.ko
+        run: |
+          # `pipefail`, because the output is teed and the checks below read that file.
+          set -o pipefail
+          : "${KDIR:?the DDK image is expected to set KDIR}"
+          make -C "$KDIR" M="$PWD/probe-lkm" \
+            ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
+            -j"$(nproc)" modules 2>&1 | tee /tmp/probe-build.log
+          ls -l probe-lkm/rkp_probe.ko
+
+      - name: Keep the symbol table, drop the debug info
+        run: |
+          # The loader rewrites entries in this module's ELF symbol table to absolutise the
+          # symbols it resolves, so `.symtab` has to survive; the debug info is most of the file
+          # and is for a build machine rather than a phone.
+          cd probe-lkm
+          before=$(stat -c %s rkp_probe.ko)
+          llvm-strip -d rkp_probe.ko
+          after=$(stat -c %s rkp_probe.ko)
+          echo "size: $before -> $after bytes"
+          modinfo ./rkp_probe.ko | head -6
+
+      - name: It carries the one symbol the loader has to resolve, and no flush helper
+        run: |
+          set -eu
+          cd probe-lkm
+          llvm-nm -u rkp_probe.ko > /tmp/undef.txt
+          echo "undefined:"; cat /tmp/undef.txt
+          grep -q "selinux_hooks" /tmp/undef.txt || {
+            echo "::error::selinux_hooks is not an undefined symbol, so nothing resolves the address this probes"
+            exit 1; }
+          # One released 5.10 artifact of the module this probes imported dcache_clean_inval_poc,
+          # which no 5.10 kernel exports. This module must import neither spelling: if one appears,
+          # it was built against the wrong tree.
+          if grep -qE "dcache_clean_inval_poc|__flush_dcache_area" /tmp/undef.txt; then
+            echo "::error::a cache-flush helper is imported; this build is against the wrong kernel tree"
+            grep -E "dcache_clean_inval_poc|__flush_dcache_area" /tmp/undef.txt
+            exit 1
+          fi
+          cp rkp_probe.ko "rkp_probe-$KMI.ko"
+          ls -l "rkp_probe-$KMI.ko"
+          echo "sha256: $(sha256sum "rkp_probe-$KMI.ko" | cut -d' ' -f1)"
+
+      - name: Upload the module
+        uses: actions/upload-artifact@v7
+        with:
+          name: rkp-probe-${{ env.KMI }}
+          path: probe-lkm/rkp_probe-${{ env.KMI }}.ko
+          if-no-files-found: error

@@ -148,6 +148,22 @@ jobs:
           # susfs/*.c` and therefore only sees what is already in this directory.
           cp susfs-lkm/susfs_try_umount.c KernelSU/kernel/susfs/susfs_try_umount.c
           cp susfs-lkm/susfs_try_umount.h KernelSU/kernel/susfs/susfs_try_umount.h
+          # Upstream resolves the cache-flush helper at run time now and calls
+          # `ksu_patch_memory_init()` from susfs_main.c before any layer patches, while that function
+          # lives in the one file this merge does not take - their patch_memory.c, because the tree's
+          # copy carries the Samsung work and both define phys_from_virt/ksu_patch_text.  Here the
+          # patch and its flush are KernelSU's own, inside ksu_patch_text(), so the fused tree
+          # supplies the initialiser itself rather than dragging the second copy in.
+          cp susfs-lkm/patch_memory_fused.c KernelSU/kernel/susfs/patch_memory_fused.c
+          # Exactly one definition, checked rather than assumed: a second one is the duplicate-symbol
+          # link failure this merge already hit once, and none is the undefined symbol the symbol
+          # check refuses - and a symbol check only names the first it finds.
+          definitions=$(grep -rl "int ksu_patch_memory_init(void)" KernelSU/kernel/susfs | wc -l)
+          if [ "$definitions" != "1" ]; then
+            echo "::error::ksu_patch_memory_init must be defined exactly once in the merged tree (found $definitions)"
+            grep -rn "ksu_patch_memory_init" KernelSU/kernel/susfs | head -10
+            exit 1
+          fi
 
           # `symbol_resolver.c` stays, because two of its exports exist nowhere else - the previous run's
           # symbol check named them (`ksu_find_symbol_all`, `ksu_kallsyms_lookup_name`). What it must not

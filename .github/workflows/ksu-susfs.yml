@@ -108,18 +108,9 @@ jobs:
           ref: ${{ env.SUSFS_REF }}
           path: susfs-src
 
-      - name: Apply our Samsung delta, unless this ref carries it already
+      - name: Apply our Samsung delta
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE/KernelSU"
-          # From the `test` line the tree ships the same delta itself - `kernel/compat/samsung_kdp.c`,
-          # `samsung_rkp.c`, `samsung_defex.c`, the four `CONFIG_KSU_SAMSUNG_*` options and the kprobe
-          # route in `selinux_hide.c` - so applying ours on top is a tree with both, and the checks below
-          # are about our patch's shape rather than about this one's. Read from the tree rather than from
-          # the ref's name: a tree that carries the delta is what decides this, not what it is called.
-          if [ -f KernelSU/kernel/compat/samsung_kdp.c ]; then
-            echo "$(basename "$KSU_REF") carries the Samsung delta already; not applying $PATCH"
-            exit 0
-          fi
           git -C KernelSU apply --verbose "$GITHUB_WORKSPACE/$PATCH"
           python3 tools/check_rkp_branch.py --self-test
           python3 tools/check_rkp_branch.py --tree KernelSU

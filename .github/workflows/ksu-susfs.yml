@@ -158,7 +158,10 @@ jobs:
           # Exactly one definition, checked rather than assumed: a second one is the duplicate-symbol
           # link failure this merge already hit once, and none is the undefined symbol the symbol
           # check refuses - and a symbol check only names the first it finds.
-          definitions=$(grep -rl "int ksu_patch_memory_init(void)" KernelSU/kernel/susfs | wc -l)
+          # Definitions, not mentions: the header declares the same name, so the match is anchored to
+          # a line that is the definition and is limited to .c files.  A loose pattern counted the
+          # declaration and failed the first run of this check with "found 2".
+          definitions=$(grep -rl --include='*.c' '^int ksu_patch_memory_init(void)$' KernelSU/kernel/susfs | wc -l)
           if [ "$definitions" != "1" ]; then
             echo "::error::ksu_patch_memory_init must be defined exactly once in the merged tree (found $definitions)"
             grep -rn "ksu_patch_memory_init" KernelSU/kernel/susfs | head -10

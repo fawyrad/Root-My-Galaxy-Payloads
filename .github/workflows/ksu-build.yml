@@ -158,9 +158,11 @@ env:
   # moved to `Baka-SU/BakaSU`. The old name redirects, so a pinned ref keeps working either way - the
   # canonical one is used here because that is what the upstream itself answers to now.
   # `kernelsu-next-test` is KernelSU-Next's `test` line, which carries the Samsung delta itself - the
-  # same compat files and Kconfig this repository's patch adds. It is a flavour of its own so a build of
-  # it publishes beside the release-based one instead of replacing it, and the patch steps below are
-  # skipped for it because applying ours on top of theirs is a tree with both.
+  # same compat files and Kconfig this repository's patch adds - so what it takes is not that delta but
+  # the compat patch kept beside it: that line reads the device tree for a `samsung,` compatible entry,
+  # which a Qualcomm-based Galaxy does not carry, and its late-load path never arms the AVC-spoof hook.
+  # It is a flavour of its own so a build of it publishes beside the release-based one instead of
+  # replacing it, and ours is never applied on top of theirs, which would be a tree with both.
   FLAVOR_REPO: ${{ fromJSON('{"kernelsu":"tiann/KernelSU","kernelsu-next":"KernelSU-Next/KernelSU-Next","kernelsu-next-test":"KernelSU-Next/KernelSU-Next","resukisu":"Baka-SU/BakaSU"}')[inputs.flavor || 'kernelsu'] }}
   FLAVOR_PATCH: ${{ fromJSON('{"kernelsu":"KernelSU","kernelsu-next":"KernelSU-Next","kernelsu-next-test":"KernelSU-Next","resukisu":"ReSukiSU"}')[inputs.flavor || 'kernelsu'] }}
   # Distinguishes the files this flavour publishes from the others', so all three can be served for
@@ -188,7 +190,13 @@ env:
   # (`CONFIG_KSU_TRACEPOINT_HOOK=y CONFIG_KSU_MULTI_MANAGER_SUPPORT=y`), so a build without them is not
   # the configuration the project tests. KernelSU and KernelSU-Next compile the same files with no
   # flag at all, which is why this is empty for them rather than a shared value.
-  FLAVOR_CONFIG: ${{ fromJSON('{"kernelsu":"","kernelsu-next":"","kernelsu-next-test":"","resukisu":"CONFIG_KSU_TRACEPOINT_HOOK=y CONFIG_KSU_MULTI_MANAGER_SUPPORT=y"}')[inputs.flavor || 'kernelsu'] }}
+  #
+  # The test flavour is the one exception, and the reason is the guard rather than the hook: its tree
+  # refuses live text patching only when its own device reading says Samsung, which is the reading the
+  # compat patch widens to Qualcomm-based Galaxies - so without this variable those phones attempt the
+  # write the guard exists to refuse. Our own patch's guard is unconditional once the variable is set,
+  # which is why the flag is set for this flavour alone.
+  FLAVOR_CONFIG: ${{ fromJSON('{"kernelsu":"","kernelsu-next":"","kernelsu-next-test":"CONFIG_KSU_SAMSUNG_NO_PATCH_TEXT=y","resukisu":"CONFIG_KSU_TRACEPOINT_HOOK=y CONFIG_KSU_MULTI_MANAGER_SUPPORT=y"}')[inputs.flavor || 'kernelsu'] }}
   # Which rustc builds `ksud`.
   #
   # ReSukiSU's is nightly by construction - `userspace/ksud/src/main.rs` opens with
@@ -211,10 +219,9 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Check the patch exists for this ref
-        # Not for the test flavour: its tree carries the Samsung delta, so there is no patch of ours to
-        # expect. The step exists to turn a missing patch into a named failure, and for this flavour the
-        # absence is the design.
-        if: env.FLAVOR != 'kernelsu-next-test'
+        # Every flavour needs one, and which one is decided by the flavour and the ref: a release ref takes
+        # the whole Samsung delta, the test line takes the compat patch beside it. A patch this run cannot
+        # find is a named failure here rather than a build that quietly lacks the delta.
         run: |
           if [ ! -f "${{ env.PATCH }}" ]; then
             echo "::error::No patch for ref ${{ env.KSU_REF }}: expected ${{ env.PATCH }}"
@@ -262,14 +269,15 @@ jobs:
           grep -rn 'github.com/Kernel-SU/' "${manifests[@]}" || echo "no Kernel-SU references left"
 
       - name: Apply the Samsung patch
-        # Skipped for `kernelsu-next-test`: that line ships `kernel/compat/samsung_kdp.c`, the RKP helper
-        # and the four `CONFIG_KSU_SAMSUNG_*` options itself, so applying ours on top would be a tree with
-        # both. The check that follows reads our patch's shape out of the tree, so it goes with it.
-        if: env.FLAVOR != 'kernelsu-next-test'
+        # Which patch that is depends on the tree: a release ref takes the whole delta, while the test line
+        # already carries it and takes the compat patch kept beside it, whose own comment says what it
+        # fixes. Ours is never applied on top of theirs - that would be a tree with both.
         run: git -C KernelSU apply --verbose "$GITHUB_WORKSPACE/${{ env.PATCH }}"
 
       - name: Neither shortcut may drop what the full path does
-        if: env.FLAVOR != 'kernelsu-next-test'
+        # Read out of the tree the patch above was applied to, so it covers whichever patch that was: a
+        # release flavour's whole delta, or the test line's compat patch - and for that line the arming
+        # this check demands is one of the two things the compat patch puts back.
         run: python3 tools/check_rkp_branch.py --tree KernelSU
 
       - name: Rust toolchain and target
@@ -385,10 +393,9 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Check the patch exists for this ref
-        # Not for the test flavour: its tree carries the Samsung delta, so there is no patch of ours to
-        # expect. The step exists to turn a missing patch into a named failure, and for this flavour the
-        # absence is the design.
-        if: env.FLAVOR != 'kernelsu-next-test'
+        # Every flavour needs one, and which one is decided by the flavour and the ref: a release ref takes
+        # the whole Samsung delta, the test line takes the compat patch beside it. A patch this run cannot
+        # find is a named failure here rather than a build that quietly lacks the delta.
         run: |
           if [ ! -f "${{ env.PATCH }}" ]; then
             echo "::error::No patch for ref ${{ env.KSU_REF }}: expected ${{ env.PATCH }}"
@@ -411,18 +418,17 @@ jobs:
           fetch-tags: true
 
       - name: Apply the Samsung patch
-        # Skipped for `kernelsu-next-test` for the reason the same step in the other jobs gives: that tree
-        # ships the delta itself. This shape of the step - the two-line form with the safe.directory line -
-        # was missed by the first pass at this guard, and the run named the directory it could not open.
-        if: env.FLAVOR != 'kernelsu-next-test'
+        # Two lines here, and the first one is load-bearing: this checkout belongs to the container's user,
+        # and a pass that skipped it named the directory git could not open rather than the patch it had
+        # not applied.
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE/KernelSU"
           git -C KernelSU apply --verbose "$GITHUB_WORKSPACE/${{ env.PATCH }}"
 
       - name: Neither shortcut may drop what the full path does
-        # The check reads our patch's shape out of the tree; the test flavour's tree has no patch of ours
-        # to read, so running it there would fail on a tree that is correct for its line.
-        if: env.FLAVOR != 'kernelsu-next-test'
+        # Read out of the tree the patch above was applied to, so it covers whichever patch that was: a
+        # release flavour's whole delta, or the test line's compat patch - and for that line the arming
+        # this check demands is one of the two things the compat patch puts back.
         run: python3 tools/check_rkp_branch.py --tree KernelSU
 
       - name: Build kernelsu.ko
@@ -544,10 +550,9 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Check the patch exists for this ref
-        # Not for the test flavour: its tree carries the Samsung delta, so there is no patch of ours to
-        # expect. The step exists to turn a missing patch into a named failure, and for this flavour the
-        # absence is the design.
-        if: env.FLAVOR != 'kernelsu-next-test'
+        # Every flavour needs one, and which one is decided by the flavour and the ref: a release ref takes
+        # the whole Samsung delta, the test line takes the compat patch beside it. A patch this run cannot
+        # find is a named failure here rather than a build that quietly lacks the delta.
         run: |
           if [ ! -f "${{ env.PATCH }}" ]; then
             echo "::error::No patch for ref ${{ env.KSU_REF }}: expected ${{ env.PATCH }}"
@@ -567,18 +572,17 @@ jobs:
           fetch-tags: true
 
       - name: Apply the Samsung patch
-        # Skipped for `kernelsu-next-test` for the reason the same step in the other jobs gives: that tree
-        # ships the delta itself. This shape of the step - the two-line form with the safe.directory line -
-        # was missed by the first pass at this guard, and the run named the directory it could not open.
-        if: env.FLAVOR != 'kernelsu-next-test'
+        # Two lines here, and the first one is load-bearing: this checkout belongs to the container's user,
+        # and a pass that skipped it named the directory git could not open rather than the patch it had
+        # not applied.
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE/KernelSU"
           git -C KernelSU apply --verbose "$GITHUB_WORKSPACE/${{ env.PATCH }}"
 
       - name: Neither shortcut may drop what the full path does
-        # The check reads our patch's shape out of the tree; the test flavour's tree has no patch of ours
-        # to read, so running it there would fail on a tree that is correct for its line.
-        if: env.FLAVOR != 'kernelsu-next-test'
+        # Read out of the tree the patch above was applied to, so it covers whichever patch that was: a
+        # release flavour's whole delta, or the test line's compat patch - and for that line the arming
+        # this check demands is one of the two things the compat patch puts back.
         run: python3 tools/check_rkp_branch.py --tree KernelSU
 
       - name: Build for the target release
@@ -713,14 +717,15 @@ jobs:
           sed -i 's#github\.com/Kernel-SU/#github.com/KernelSU2/#g' "${manifests[@]}"
 
       - name: Apply the Samsung patch
-        # Skipped for `kernelsu-next-test`: that line ships `kernel/compat/samsung_kdp.c`, the RKP helper
-        # and the four `CONFIG_KSU_SAMSUNG_*` options itself, so applying ours on top would be a tree with
-        # both. The check that follows reads our patch's shape out of the tree, so it goes with it.
-        if: env.FLAVOR != 'kernelsu-next-test'
+        # Which patch that is depends on the tree: a release ref takes the whole delta, while the test line
+        # already carries it and takes the compat patch kept beside it, whose own comment says what it
+        # fixes. Ours is never applied on top of theirs - that would be a tree with both.
         run: git -C KernelSU apply --verbose "$GITHUB_WORKSPACE/${{ env.PATCH }}"
 
       - name: Neither shortcut may drop what the full path does
-        if: env.FLAVOR != 'kernelsu-next-test'
+        # Read out of the tree the patch above was applied to, so it covers whichever patch that was: a
+        # release flavour's whole delta, or the test line's compat patch - and for that line the arming
+        # this check demands is one of the two things the compat patch puts back.
         run: python3 tools/check_rkp_branch.py --tree KernelSU
 
       - name: Show what the daemon already carries
@@ -982,10 +987,9 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Check the patch exists for this ref
-        # Not for the test flavour: its tree carries the Samsung delta, so there is no patch of ours to
-        # expect. The step exists to turn a missing patch into a named failure, and for this flavour the
-        # absence is the design.
-        if: env.FLAVOR != 'kernelsu-next-test'
+        # Every flavour needs one, and which one is decided by the flavour and the ref: a release ref takes
+        # the whole Samsung delta, the test line takes the compat patch beside it. A patch this run cannot
+        # find is a named failure here rather than a build that quietly lacks the delta.
         run: |
           if [ ! -f "${{ env.PATCH }}" ]; then
             echo "::error::No patch for ref ${{ env.KSU_REF }}: expected ${{ env.PATCH }}"
@@ -1012,14 +1016,15 @@ jobs:
           sed -i 's#github\.com/Kernel-SU/#github.com/KernelSU2/#g' "${manifests[@]}"
 
       - name: Apply the Samsung patch
-        # Skipped for `kernelsu-next-test`: that line ships `kernel/compat/samsung_kdp.c`, the RKP helper
-        # and the four `CONFIG_KSU_SAMSUNG_*` options itself, so applying ours on top would be a tree with
-        # both. The check that follows reads our patch's shape out of the tree, so it goes with it.
-        if: env.FLAVOR != 'kernelsu-next-test'
+        # Which patch that is depends on the tree: a release ref takes the whole delta, while the test line
+        # already carries it and takes the compat patch kept beside it, whose own comment says what it
+        # fixes. Ours is never applied on top of theirs - that would be a tree with both.
         run: git -C KernelSU apply --verbose "$GITHUB_WORKSPACE/${{ env.PATCH }}"
 
       - name: Neither shortcut may drop what the full path does
-        if: env.FLAVOR != 'kernelsu-next-test'
+        # Read out of the tree the patch above was applied to, so it covers whichever patch that was: a
+        # release flavour's whole delta, or the test line's compat patch - and for that line the arming
+        # this check demands is one of the two things the compat patch puts back.
         run: python3 tools/check_rkp_branch.py --tree KernelSU
 
       - name: Collect the module built for each KMI

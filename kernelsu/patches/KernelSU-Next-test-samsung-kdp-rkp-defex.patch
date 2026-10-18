@@ -1,0 +1,78 @@
+diff --git a/kernel/compat/samsung_rkp.c b/kernel/compat/samsung_rkp.c
+index 9cca94c..6d31fae 100644
+--- a/kernel/compat/samsung_rkp.c
++++ b/kernel/compat/samsung_rkp.c
+@@ -15,11 +15,31 @@
+ #include "klog.h"
+ #include "policy/allowlist.h"
+ 
++/*
++ * Whether this kernel is running on Samsung hardware.
++ *
++ * The compatible property is the first reading, and it answers only for a board that names
++ * itself: an Exynos target carries `samsung,<soc>` at the root, while a Qualcomm-based Galaxy
++ * carries its platform vendor and no Samsung entry at all. Measured on an SM-S938U1 (6.6.127,
++ * S938USQUCDZIF), where the whole property is
++ *
++ *     qcom,sun-mtp\0qcom,sun\0qcom,sunp-mtp\0qcom,sunp\0qcom,mtp\0
++ *
++ * - five entries and not one `samsung,` - on a phone whose model node reads
++ * `Samsung PA3Q PROJECT (board-id,11)`. So the model is read as the second answer.
++ *
++ * Both are the device tree's own description of the hardware, and the answer decides more than a
++ * label: every Samsung-only path in this delta hangs off it. A device misread as non-Samsung
++ * attempts the live text patch this delta refuses on EL2 hardware, and then skips the
++ * kprobe/kretprobe fallback that stands in for its syscall hooks - a boot with the module loaded,
++ * no manager ever crowned and no `su` for any app.
++ */
+ bool ksu_samsung_device_detected(void)
+ {
+ #ifdef CONFIG_OF
+ 	struct device_node *root;
+ 	const char *compatible;
++	const char *model;
+ 	int length;
+ 	bool samsung_device = false;
+ 
+@@ -40,6 +60,14 @@ bool ksu_samsung_device_detected(void)
+ 		length -= entry_length + 1;
+ 		compatible += entry_length + 1;
+ 	}
++
++	if (!samsung_device) {
++		model = of_get_property(root, "model", &length);
++		samsung_device = model && length > 0 &&
++				 strnlen(model, length) >= sizeof("samsung") - 1 &&
++				 !strncasecmp(model, "samsung", sizeof("samsung") - 1);
++	}
++
+ 	of_node_put(root);
+ 	return samsung_device;
+ #else
+diff --git a/kernel/core/init.c b/kernel/core/init.c
+index 578b3f5..c699af2 100644
+--- a/kernel/core/init.c
++++ b/kernel/core/init.c
+@@ -31,6 +31,11 @@
+ #include "compat/samsung_defex.h"
+ #include "ksu_samsung_kdp.h"
+ 
++// The AVC-spoof hook is armed from on_boot_completed(), and dispatch.c skips that event for a
++// late-loaded module - which is how this delta reaches a locked device. Declared the way
++// runtime/boot_event.c declares it, because the function itself lives in extras.c.
++extern void ksu_avc_spoof_late_init(void);
++
+ #if defined(__x86_64__) && !defined(CONFIG_KSU_X86_PATCH_SYSCALL_DISPATCHER)
+ #include <asm/cpufeature.h>
+ #include <linux/version.h>
+@@ -194,6 +199,10 @@ int __init kernelsu_init(void)
+ 		ksu_file_wrapper_init();
+ 
+ 		ksu_boot_completed = true;
++
++		// What on_boot_completed() does for a module that was present at boot. A late-loaded one
++		// never gets the event, so the phone being past boot here is the cue to arm it.
++		ksu_avc_spoof_late_init();
+ 		track_throne(false);
+ 
+ 		ksu_feature_apply_forced();

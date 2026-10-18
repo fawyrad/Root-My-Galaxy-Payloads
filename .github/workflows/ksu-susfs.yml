@@ -79,6 +79,11 @@ env:
   # Follows the tag rather than naming one, which is what `ksu-build.yml` does with the same value: a
   # run for a release nobody has built before used to fail at the patch step with a file that is not
   # there, and the fix is a name derived from the input rather than an edit to this line.
+  #
+  # One ref resolves to something other than that delta: `test`, KernelSU-Next's own line, whose tree
+  # carries the delta already and whose name answers here with the compat patch `ksu-build.yml` applies
+  # to it. Kept as one expression rather than a condition, because the fused tree wants the same two
+  # fixes either way - and a run for a ref with no patch of ours fails at the apply, by name.
   PATCH: kernelsu/patches/KernelSU-Next-${{ inputs.ksu_ref || 'v3.4.2' }}-samsung-kdp-rkp-defex.patch
 
 jobs:

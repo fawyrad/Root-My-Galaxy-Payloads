@@ -31,6 +31,13 @@ string `ksud -V` answers with, and read back as nothing at all; the self-test be
 because it is the reason `--version` comes from the run's tag rather than from the binary. A daemon
 built by the workflow below is stamped, so the two agree - but a publish that *needed* the binary
 to answer would silently drop the field on an entry the app needs it for.
+
+There is a third answer, and it is neither of those: a daemon built from a *branch* has no release to
+name. `--branch` says so, and the entry it writes declares no version at all - the state the app
+already reads as "nothing declared, offer the flavour's own release", and the only honest one for a
+build whose `git describe` ends in `-g<commit>`. Without it a rebuild of the test line writes that
+line's own name into a field that exists to name a release, and the manager the app then offers is
+looked up under a version no project publishes.
 """
 
 from __future__ import annotations
@@ -133,6 +140,7 @@ def entry_for(
     expect: list[str],
     url_prefix: str | None,
     version: str | None,
+    branch: bool = False,
 ) -> dict:
     """The feed entry for one daemon, built from what the artifact itself says.
 
@@ -150,8 +158,11 @@ def entry_for(
     # and for the same reason: a hand-built or older daemon often carries nothing readable, and an
     # entry that declares no version leaves the app falling back to the flavour's own release for the
     # manager it offers - which is only correct while the two happen to be the same number.
-    stamped = (version or daemon_version(path) or "").lstrip("vV")
-    if not stamped:
+    #
+    # A branch is the third answer and it is not a version, so it bypasses both readings rather than
+    # filling the field with a name no release answers to.
+    stamped: str | None = None if branch else (version or daemon_version(path) or "").lstrip("vV")
+    if not branch and not stamped:
         raise SystemExit(
             f"{daemon} carries no readable version and none was given. A generic daemon is offered to "
             "devices that have no target entry of their own, so the manager the app installs cannot "
@@ -171,16 +182,16 @@ def entry_for(
         )
 
     size, sha256 = _digest(path)
-    return {
-        "flavor": flavour,
-        "kmis": kmis,
-        "daemon": {
-            "url": f"{url_prefix.rstrip('/')}/kernelsu/{daemon}",
-            "size": size,
-            "sha256": sha256,
-            "version": stamped,
-        },
+    served = {
+        "url": f"{url_prefix.rstrip('/')}/kernelsu/{daemon}",
+        "size": size,
+        "sha256": sha256,
     }
+    # Absent rather than null, which is the shape the feed carries for this already: a null would be a
+    # value the app has to special-case, and there is nothing to say.
+    if stamped:
+        served["version"] = stamped
+    return {"flavor": flavour, "kmis": kmis, "daemon": served}
 
 
 def _read_feed(repo: str) -> dict:
@@ -509,6 +520,11 @@ def main() -> int:
     )
     parser.add_argument("--expect", default="", help="the KMI set the run built, as JSON or as a list")
     parser.add_argument("--version", help="the KernelSU ref or release, e.g. v3.4.0; taken from the binary when absent")
+    parser.add_argument(
+        "--branch",
+        action="store_true",
+        help="the ref names a branch rather than a release, so the entry declares no version",
+    )
     parser.add_argument("--url-prefix", help="repository raw-URL prefix this run publishes under")
     parser.add_argument("--dry-run", action="store_true")
     arguments = parser.parse_args()
@@ -531,9 +547,11 @@ def main() -> int:
         _as_list(arguments.expect),
         arguments.url_prefix,
         arguments.version,
+        arguments.branch,
     )
     action = publish(arguments.repo, entry, arguments.dry_run)
-    print(f"{action}: {entry['flavor']} carries {', '.join(entry['kmis'])} (version {entry['daemon']['version']})")
+    declared = entry["daemon"].get("version") or "no release"
+    print(f"{action}: {entry['flavor']} carries {', '.join(entry['kmis'])} (version {declared})")
     print(f"  {entry['daemon']['url']} ({entry['daemon']['size']} bytes)")
     if arguments.dry_run:
         print("  (dry run: nothing written)")

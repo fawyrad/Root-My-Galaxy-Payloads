@@ -1188,10 +1188,16 @@ jobs:
       - name: Point the generic feed at it
         run: |
           daemon="ksud${{ env.FLAVOR_SUFFIX }}-generic-kdp"
+          # `--branch` for the test line, and it is the flavour that decides it: that line's ref is a
+          # branch, so there is no release for the entry to name, and a rebuild used to write the
+          # branch's own name into that field - a version no project publishes, which the app reads as
+          # a manager it cannot find. Absent, the app falls back to the flavour's own release, which is
+          # the manager this row offered before the rebuild.
           python3 tools/generic_daemon.py \
             --repo . --daemon "$daemon" --artifact "kernelsu/$daemon" \
             --flavor "${{ env.FLAVOR }}" --expect '${{ env.KMI_SET }}' \
             --version "${{ env.KSU_REF }}" \
+            ${{ env.FLAVOR == 'kernelsu-next-test' && '--branch' || '' }} \
             --url-prefix "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}"
 
       - name: Commit

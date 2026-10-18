@@ -70,7 +70,11 @@ DAEMON_VERSION = re.compile(
 # are not the same string (`-rsksu` against `resukisu`) because the first is a file name and the second
 # is what `KernelSuFlavor.id` in the app compares, and a feed that named the wrong one would offer a
 # device a daemon built for another kernel.
-FLAVOURS = {"": "kernelsu", "-next": "kernelsu-next", "-rsksu": "resukisu"}
+# The suffix a published artifact carries, and the flavour it names. `-next-test` is KernelSU-Next's
+# `test` line: the same project, the same manifest and the same manager, a different tree - it ships the
+# Samsung delta itself, so its builds take no patch of ours. It is a flavour rather than a rebuild under
+# `-next` because the two have to be servable side by side, and a feed entry names one artifact.
+FLAVOURS = {"": "kernelsu", "-next": "kernelsu-next", "-next-test": "kernelsu-next-test", "-rsksu": "resukisu"}
 # The other direction: the prefix a payload id carries for each flavour, which is what `VERSIONED_ID`
 # above reads back. The two live together because they are one table written both ways, and a prefix
 # invented on the writing side - where a new flavour's entry is created - would be an id this file no

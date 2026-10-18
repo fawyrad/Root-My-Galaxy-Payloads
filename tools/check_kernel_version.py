@@ -44,9 +44,13 @@ VERSION_BASE = 30000
 # arithmetic would refuse a build that is exactly right. The offset is written down rather than
 # discovered because there is nowhere to discover it from: it is a constant in someone else's build
 # files, and a release that changed it would have to be read by a person.
+# `kernelsu-next-test` is the same project and the same arithmetic as `kernelsu-next` - KernelSU-Next's
+# `test` branch is that repository, not a fork - so a log from either names and counts identically. The
+# entry exists so a build can say which tree it came from without the check refusing it.
 FLAVOURS: dict[str, tuple[str, int]] = {
     "kernelsu": ("KernelSU", 0),
     "kernelsu-next": ("KernelSU-Next", 0),
+    "kernelsu-next-test": ("KernelSU-Next", 0),
     "resukisu": ("ReSukiSU", 700),
 }
 

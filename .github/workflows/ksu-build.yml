@@ -174,7 +174,7 @@ env:
   # mismatch it is. `generic_kmis` first, then the compile check's own list.
   KMI_SET: ${{ inputs.generic_kmis || inputs.kmi || '["android15-6.6","android14-6.1"]' }}
   KSU_REF: ${{ inputs.ksu_ref || 'v3.3.0' }}
-  PATCH: kernelsu/patches/${{ fromJSON('{"kernelsu":"KernelSU","kernelsu-next":"KernelSU-Next","resukisu":"ReSukiSU"}')[inputs.flavor || 'kernelsu'] }}-${{ inputs.ksu_ref || 'v3.3.0' }}-samsung-kdp-rkp-defex.patch
+  PATCH: kernelsu/patches/${{ fromJSON('{"kernelsu":"KernelSU","kernelsu-next":"KernelSU-Next","kernelsu-next-test":"KernelSU-Next","resukisu":"ReSukiSU"}')[inputs.flavor || 'kernelsu'] }}-${{ inputs.ksu_ref || 'v3.3.0' }}-samsung-kdp-rkp-defex.patch
   # How `ksud` has to be asked for. KernelSU is one Cargo workspace at its root, so its package is
   # selected by name; the other two have no workspace at all - `ksud` and `ksuinit` are separate
   # crates under `userspace/`, each with its own lockfile - and their own `build.sh` builds `ksud` by
@@ -411,11 +411,18 @@ jobs:
           fetch-tags: true
 
       - name: Apply the Samsung patch
+        # Skipped for `kernelsu-next-test` for the reason the same step in the other jobs gives: that tree
+        # ships the delta itself. This shape of the step - the two-line form with the safe.directory line -
+        # was missed by the first pass at this guard, and the run named the directory it could not open.
+        if: env.FLAVOR != 'kernelsu-next-test'
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE/KernelSU"
           git -C KernelSU apply --verbose "$GITHUB_WORKSPACE/${{ env.PATCH }}"
 
       - name: Neither shortcut may drop what the full path does
+        # The check reads our patch's shape out of the tree; the test flavour's tree has no patch of ours
+        # to read, so running it there would fail on a tree that is correct for its line.
+        if: env.FLAVOR != 'kernelsu-next-test'
         run: python3 tools/check_rkp_branch.py --tree KernelSU
 
       - name: Build kernelsu.ko
@@ -560,11 +567,18 @@ jobs:
           fetch-tags: true
 
       - name: Apply the Samsung patch
+        # Skipped for `kernelsu-next-test` for the reason the same step in the other jobs gives: that tree
+        # ships the delta itself. This shape of the step - the two-line form with the safe.directory line -
+        # was missed by the first pass at this guard, and the run named the directory it could not open.
+        if: env.FLAVOR != 'kernelsu-next-test'
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE/KernelSU"
           git -C KernelSU apply --verbose "$GITHUB_WORKSPACE/${{ env.PATCH }}"
 
       - name: Neither shortcut may drop what the full path does
+        # The check reads our patch's shape out of the tree; the test flavour's tree has no patch of ours
+        # to read, so running it there would fail on a tree that is correct for its line.
+        if: env.FLAVOR != 'kernelsu-next-test'
         run: python3 tools/check_rkp_branch.py --tree KernelSU
 
       - name: Build for the target release

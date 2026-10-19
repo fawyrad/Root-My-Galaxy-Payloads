@@ -79,15 +79,29 @@ struct kp_stat_args {
 
 static bool kp_armed;
 
-/* Captured before the call runs: the return value lands in regs->regs[0], so reading the argument
- * registers afterwards would hand the spoofers the return value in place of the first argument. */
+/*
+ * Captured before the call runs: the return value lands in regs->regs[0], so reading the argument
+ * registers afterwards would hand the spoofers the return value in place of the first argument.
+ *
+ * The arguments are NOT in the kprobe's own `regs`.  On arm64 a syscall entry function has one
+ * parameter - `const struct pt_regs *regs` - so on entry x0 holds the address of the syscall's pt_regs
+ * and the caller's arguments are inside that struct.  Reading them from `regs` itself (the first
+ * version of this file did) hands back the pointer as the first argument and whatever the wrapper left
+ * in x1..x5 as the rest; the stat rewrite then writes into the wrong address and the dirent filter
+ * fails its first uaccess, which is exactly the log this was diagnosed from: `dirent rewrite stopped at
+ * 0/88 bytes (returned 88)`.
+ *
+ * `syscall_get_arguments()` gets that struct so the tree's own ABI rules (orig_x0 and the rest) apply
+ * to the real arguments rather than to a guess about the register layout.
+ */
 #define KP_ENTRY(_fn, _nr)							\
 	static int _fn(struct kretprobe_instance *ri, struct pt_regs *regs)	\
 	{									\
 		struct kp_stat_args *args = (struct kp_stat_args *)ri->data;	\
+		struct pt_regs *sys = (struct pt_regs *)regs->regs[0];		\
 										\
 		args->nr = (_nr);						\
-		syscall_get_arguments(current, regs, args->a);			\
+		syscall_get_arguments(current, sys, args->a);			\
 		return 0;							\
 	}
 

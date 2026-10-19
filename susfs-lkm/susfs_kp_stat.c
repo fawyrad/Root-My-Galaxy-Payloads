@@ -23,15 +23,15 @@
  * Not through `ri->rp`: this kernel's `struct kretprobe_instance` has no such member (measured as a
  * compile error on the first attempt), and a layout that differs from the one upstream's kernels use
  * is not something to depend on.  Each syscall gets its own entry handler, which stamps its number
- * into the instance data before capturing the argument registers; the return handler reads the number
- * from there.  One handler pair per syscall, no struct walk.
+ * (and ABI) into the instance data before capturing the argument registers; the return handler reads
+ * them from there.  One handler pair per syscall, no struct walk.
  *
  * ## What makes it work without touching upstream's logic
  *
  *   1. susfs_kstat_post() reads only the buffer argument - args[1] for fstat and getdents64, args[2]
- *      for newfstatat, args[4] for statx (see its own number switch).  The entry handler copies all
- *      six argument registers before the call runs, so the buffer pointer is captured while it is
- *      still a pointer.
+ *      for newfstatat and the compat fstatat64, args[4] for statx (see its own number switch).  The
+ *      entry handler copies all six argument registers before the call runs, so the buffer pointer is
+ *      captured while it is still a pointer.
  *   2. The listing answer is a byte count, and the return handler hands a shorter one back through
  *      the syscall's return register.  That is exactly what the wrapper does with its `out`.
  *   3. A kretprobe cannot pre-empt the call, so sus_dirent.c's filldir prefilter (which answers
@@ -44,27 +44,29 @@
  * table write lands, the wrappers are the cheaper answer and this layer stays off, so no call is ever
  * post-processed twice.
  *
- * Native numbers only.  The compat numbers are handled by the wrappers' own compat entries on kernels
- * where those install; the devices this layer exists for run 64-bit app processes, and a compat
- * kretprobe needs a symbol (`__arm_compat_sys_*`) whose naming differs per tree.  A 32-bit caller
- * therefore gets no spoofing here rather than a guess.
+ * ## The one native entry this kernel does not expose
  *
- * ## Measured on the device (2026-10-19, SM-S938U1, 6.6.127)
+ * Native `fstat` (80) is not covered, and not for want of a probe: this kernel's kallsyms carries no
+ * `__arm64_sys_fstat`, `__se_sys_fstat`, `__do_sys_fstat` or `ksys_fstat` at all - read out of
+ * /proc/kallsyms (395,915 lines) on the device - while `__arm64_sys_newfstatat`, `__arm64_sys_statx`
+ * and `__arm64_sys_getdents64` are all there.  A probe cannot attach to a symbol that does not exist,
+ * and the alternative entry points (`vfs_fstat`, `cp_new_stat`) are either filled with a kernel
+ * `struct kstat` that the syscall later copies, or inlined; hooking those would need a second spoof
+ * implementation, not a second probe.  So an `fstat`-only caller is not spoofed here; `stat`, `ls`,
+ * `find` and everything else that goes through newfstatat or statx is.
  *
- * Armed: three of the four probes - `__arm64_sys_newfstatat`, `__arm64_sys_statx` and
- * `__arm64_sys_getdents64` appear in `/sys/kernel/debug/kprobes/list` with the return flag.  With a
- * static sus_kstat rule on a root-owned file, uid 10359 read the spoofed size (123456789) while root
- * read the real 6; with a sus_path rule on one name in a two-file directory, uid 10359's `ls` showed
- * only the other name and `cat` of the hidden one answered ENOENT, while root saw both.  Before the
- * pt_regs fix the same tests showed the real size and the full listing, with `sus_path: dirent
- * rewrite stopped at 0/N bytes (returned N)` in the ring - the filter running against a garbage
- * buffer.
+ * ## The AArch32 entries
  *
- * Not covered, measured: `__arm64_sys_fstat` does not register - it is absent from the kprobe list and
- * its per-probe warning is the only trace of it.  `fstat` is therefore not spoofed here; newfstatat
- * and statx are, which is what `stat` and `ls` use.  Whether the symbol exists under another name
- * could not be settled: /proc/kallsyms was denied to the shell and read as empty from the root session
- * the probe list was taken in.
+ * These exist under their own names and are probed with the same capture: `__arm64_sys_stat64`,
+ * `lstat64`, `fstat64` and `fstatat64` (195/196/197/327), and `__arm64_compat_sys_newstat`,
+ * `newlstat`, `newfstat` and `getdents` (106/107/108/141).  AArch32 `statx` (397) and `getdents64`
+ * (217) need no entry of their own: upstream's own notes record that both map to the native bodies
+ * with the same struct layouts, so the native probes above already see those calls.
+ *
+ * Not exercised: no 32-bit app process was available on the device this was measured on, so these
+ * probes were confirmed to register (they appear in /sys/kernel/debug/kprobes/list) but nothing has
+ * watched them post-process a call.  Their argument convention is the same pt_regs wrapper as the
+ * native entries, which is what makes the shared capture correct rather than a guess.
  */
 
 #include <linux/kernel.h>
@@ -88,9 +90,11 @@ __nocfi void susfs_kstat_post(long nr, bool compat, const unsigned long *args, l
  * install path is in place, which is when this layer takes over. */
 extern int kstat_hooks_armed;
 
-/* One instance's worth: the number this call is, and the arguments as they were on entry. */
+/* One instance's worth: the number this call is, the ABI it came from, and the arguments as they were
+ * on entry. */
 struct kp_stat_args {
 	long nr;
+	bool compat;
 	unsigned long a[6];
 };
 
@@ -111,21 +115,29 @@ static bool kp_armed;
  * `syscall_get_arguments()` gets that struct so the tree's own ABI rules (orig_x0 and the rest) apply
  * to the real arguments rather than to a guess about the register layout.
  */
-#define KP_ENTRY(_fn, _nr)							\
+#define KP_ENTRY(_fn, _nr, _compat)						\
 	static int _fn(struct kretprobe_instance *ri, struct pt_regs *regs)	\
 	{									\
 		struct kp_stat_args *args = (struct kp_stat_args *)ri->data;	\
 		struct pt_regs *sys = (struct pt_regs *)regs->regs[0];		\
 										\
 		args->nr = (_nr);						\
+		args->compat = (_compat);					\
 		syscall_get_arguments(current, sys, args->a);			\
 		return 0;							\
 	}
 
-KP_ENTRY(kp_entry_newfstatat, __NR_newfstatat)
-KP_ENTRY(kp_entry_fstat, __NR_fstat)
-KP_ENTRY(kp_entry_statx, __NR_statx)
-KP_ENTRY(kp_entry_getdents64, __NR_getdents64)
+KP_ENTRY(kp_entry_newfstatat, __NR_newfstatat, false)
+KP_ENTRY(kp_entry_statx, __NR_statx, false)
+KP_ENTRY(kp_entry_getdents64, __NR_getdents64, false)
+KP_ENTRY(kp_entry_stat64, 195, true)
+KP_ENTRY(kp_entry_lstat64, 196, true)
+KP_ENTRY(kp_entry_fstat64, 197, true)
+KP_ENTRY(kp_entry_fstatat64, 327, true)
+KP_ENTRY(kp_entry_newstat, 106, true)
+KP_ENTRY(kp_entry_newlstat, 107, true)
+KP_ENTRY(kp_entry_newfstat, 108, true)
+KP_ENTRY(kp_entry_getdents, 141, true)
 
 static int kp_stat_return(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
@@ -138,7 +150,7 @@ static int kp_stat_return(struct kretprobe_instance *ri, struct pt_regs *regs)
 
 	ret = regs_return_value(regs);
 	out = ret;
-	susfs_kstat_post(args->nr, false, args->a, ret, &out);
+	susfs_kstat_post(args->nr, args->compat, args->a, ret, &out);
 	/* The buffer rewrites leave the return value alone; only a listing filter shortens it. */
 	if (out != ret)
 		syscall_set_return_value(current, regs, 0, out);
@@ -154,10 +166,21 @@ static int kp_stat_return(struct kretprobe_instance *ri, struct pt_regs *regs)
 	}
 
 static struct kretprobe kp_stat_probes[] = {
+	/* The native three.  `__arm64_sys_fstat` is deliberately absent: this kernel does not carry it -
+	 * see the header.  A probe entry for a symbol that does not exist would only log a failure. */
 	KP_STAT("__arm64_sys_newfstatat", kp_entry_newfstatat),
-	KP_STAT("__arm64_sys_fstat", kp_entry_fstat),
 	KP_STAT("__arm64_sys_statx", kp_entry_statx),
 	KP_STAT("__arm64_sys_getdents64", kp_entry_getdents64),
+	/* AArch32, stat64 family. */
+	KP_STAT("__arm64_sys_stat64", kp_entry_stat64),
+	KP_STAT("__arm64_sys_lstat64", kp_entry_lstat64),
+	KP_STAT("__arm64_sys_fstat64", kp_entry_fstat64),
+	KP_STAT("__arm64_sys_fstatat64", kp_entry_fstatat64),
+	/* AArch32, the old stat family and getdents. */
+	KP_STAT("__arm64_compat_sys_newstat", kp_entry_newstat),
+	KP_STAT("__arm64_compat_sys_newlstat", kp_entry_newlstat),
+	KP_STAT("__arm64_compat_sys_newfstat", kp_entry_newfstat),
+	KP_STAT("__arm64_compat_sys_getdents", kp_entry_getdents),
 };
 
 /* The only proof a probe may be unregistered: a failed registration can leave address state behind
@@ -195,8 +218,8 @@ int susfs_kp_stat_init(void)
 		return -ENOENT;
 	}
 
-	SUSFS_LOGI("kp_stat: armed on %u kretprobe(s) (stat family + dirent rewrite), no table entry touched\n",
-		   armed);
+	SUSFS_LOGI("kp_stat: armed on %u of %u kretprobe(s) (stat family + dirent rewrite), no table entry touched\n",
+		   armed, (unsigned int)ARRAY_SIZE(kp_stat_probes));
 	return 0;
 }
 

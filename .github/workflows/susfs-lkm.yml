@@ -270,6 +270,33 @@ jobs:
             exit 1
           }
           echo "control nodes: expose_proc defaults to false"
+          # The stat family and the dirent rewrite, from a sys_exit tracepoint: upstream's own
+          # post-processing, no table entry touched.  This variant is the one built for kernels
+          # that refuse the table write, so on those the overlay is the only thing that makes these
+          # two features do anything; it arms only when the wrappers installed nothing.
+          tp=susfs-src/kernel
+          cp susfs-lkm/susfs_tp_stat.c "$tp/susfs_tp_stat.c"
+          sed -i 's/^static __nocfi void susfs_kstat_post(/__nocfi void susfs_kstat_post(/' "$tp/susfs_kstat.c"
+          grep -q '^__nocfi void susfs_kstat_post(' "$tp/susfs_kstat.c" || {
+            echo "::error::susfs_kstat_post() is still static - the tracepoint overlay cannot call it"; exit 1; }
+          # The wrapper count, and the overlay's two entry points declared beside it - right above the
+          # first place either is used, which is this file's init.
+          sed -i 's/^static int kstat_hooks_armed;$/extern int susfs_tp_stat_init(void);\nextern void susfs_tp_stat_exit(void);\n\nint kstat_hooks_armed;/' "$tp/susfs_kstat.c"
+          grep -qx 'int kstat_hooks_armed;' "$tp/susfs_kstat.c" || {
+            echo "::error::kstat_hooks_armed is still static - the overlay cannot see whether the wrappers armed"; exit 1; }
+          grep -q '^extern int susfs_tp_stat_init(void);' "$tp/susfs_kstat.c" || {
+            echo "::error::the overlay's prototypes did not land in susfs_kstat.c"; exit 1; }
+          sed -i 's/^\([[:space:]]*\)if (!kstat_hooks_armed) {/\1susfs_tp_stat_init();\n\1if (!kstat_hooks_armed) {/' "$tp/susfs_kstat.c"
+          grep -q '^[[:space:]]*susfs_tp_stat_init();' "$tp/susfs_kstat.c" || {
+            echo "::error::susfs_kstat_init() does not call the tracepoint overlay"; exit 1; }
+          sed -i 's/^\([[:space:]]*\)kstat_maps_disarm();$/\1susfs_tp_stat_exit();\n\n\1kstat_maps_disarm();/' "$tp/susfs_kstat.c"
+          grep -q '^[[:space:]]*susfs_tp_stat_exit();' "$tp/susfs_kstat.c" || {
+            echo "::error::susfs_kstat_exit() does not tear the tracepoint overlay down"; exit 1; }
+          # This module's Makefile lists its objects, so the new one is named there.
+          sed -i 's/^\([[:space:]]*\)fsnotify_lifetime\.o btf_layout\.o sus_dirent\.o$/\1fsnotify_lifetime.o btf_layout.o sus_dirent.o susfs_tp_stat.o/' "$tp/Makefile"
+          grep -q 'susfs_tp_stat\.o' "$tp/Makefile" || {
+            echo "::error::the Makefile does not build susfs_tp_stat.o"; exit 1; }
+          echo "tp_stat overlay: in place, post-processing on sys_exit"
 
       - name: Build susfs_guard_lkm.ko
         run: |

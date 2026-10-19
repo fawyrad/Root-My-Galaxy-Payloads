@@ -51,14 +51,29 @@ kprobes/kretprobes (`samsung_defex.c` on `task_defex_enforce`, the AVC spoof on 
   declarations and `ksu_register_lsm_hook()`/`ksu_unregister_lsm_hook()`), the SELinux symbol names
   against upstream's own per-KMI build check (which greps exactly `selinux_<member>` for all thirteen),
   and the reason for the failure above, read out of the module's own log.
-- **Not verified:** that it compiles - the first CI run of the `samsung` variant is the check, since a
-  DDK build cannot run on a Windows laptop - and that it arms and hides on a device. Both are the next
-  two steps, in that order.
+- **Compiles:** the `samsung` variant is built by the `SUSFS LKM` workflow for every KMI it publishes,
+  from 2026-10-11 onward.
+- **Not verified:** that it arms and hides on a device. No run has been read for its arming lines yet.
 - **Refused by design:** replace-shaped hooks (which need the read-only write), and members with no
   known SELinux implementation (a hook that installs and does nothing is worse than one that says so).
 
+## The control nodes are not created
+
+Upstream's `/proc/susfs_*` nodes are an optional mirror of the supercall interface: created by default,
+hidden per caller at run time. Hiding is an answer rather than an absence, and the node stays openable
+through `open(..., O_PATH)` while `stat` answers ENOENT - two subsystems describing one object
+differently, which a clean kernel cannot do. That is what the public detectors read (O_PATH/fstat,
+readlinkat on the pinned fd, and the getdents64 buffer during a uaccess race), and upstream's own O_PATH
+denial replaces `sys_call_table` entries - a write this project's devices refuse.
+
+So the `samsung` variant does not create them: the build compiles `susfs_expose_proc` to `false`, and
+the workflow fails if upstream moves that default rather than shipping the nodes silently. Control stays
+with the supercall, which is the interface the manager and this project's tools use. Turning them back
+on is a one-line change plus a rebuild, for anyone who needs the file interface.
+
 ## Provenance and licence
 
-The hook bodies, the `/proc/susfs_*` interface and the feature logic are upstream's, unmodified and
-built from the pinned commit recorded per variant in the feed. This file is ours, replaces theirs in
-the checkout, and stays under the same licence: GPL-2.0-only, as everything served from `susfs/` is.
+The hook bodies and the feature logic are upstream's, unmodified and built from the pinned commit
+recorded per variant in the feed; the control-node default above is this repository's change. This file
+is ours, replaces theirs in the checkout, and stays under the same licence: GPL-2.0-only, as everything
+served from `susfs/` is.

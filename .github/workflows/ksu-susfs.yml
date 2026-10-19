@@ -243,6 +243,28 @@ jobs:
           fi
           ls KernelSU/kernel/susfs/ | head -40
 
+      - name: The control nodes stay uncreated
+        run: |
+          # `/proc/susfs_*` is an optional mirror of the supercall interface. Upstream creates it by
+          # default and hides it per caller at run time, and hiding is an answer rather than an absence:
+          # the node still exists, so `open(..., O_PATH)` reaches it while `stat` answers ENOENT - which
+          # is exactly what the public detectors read (O_PATH/fstat, readlinkat on the pinned fd, and the
+          # getdents64 buffer during a uaccess race). Upstream's own O_PATH denial replaces sys_call_table
+          # entries, and on this project's devices that write is refused, so the denial is not there to
+          # rely on. With no node created there is nothing to open, nothing to list and nothing to leak,
+          # and control stays with the supercall the manager already uses.
+          file=KernelSU/kernel/susfs/susfs_main.c
+          grep -qx 'bool susfs_expose_proc = true;' "$file" || {
+            echo "::error::$file no longer declares the true default; upstream moved it and this build would ship the control nodes"
+            exit 1
+          }
+          sed -i 's/^bool susfs_expose_proc = true;$/bool susfs_expose_proc = false;/' "$file"
+          grep -qx 'bool susfs_expose_proc = false;' "$file" || {
+            echo "::error::the default did not change - the control nodes would be created"
+            exit 1
+          }
+          echo "control nodes: expose_proc defaults to false"
+
       - name: One module, one init, and one exit
         run: |
           set -eu

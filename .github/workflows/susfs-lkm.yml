@@ -252,6 +252,21 @@ jobs:
             exit 1
           fi
           echo "hook layer: this repository's kretprobe install path"
+          # The control nodes are the same story in a smaller way: upstream creates `/proc/susfs_*`
+          # unless `expose_proc=0`, and hides them per caller rather than not creating them. A node that
+          # exists and answers ENOENT to `stat` is still openable through O_PATH, and readlinkat on the
+          # pinned fd still resolves it - which is what the public detectors read. So this variant does
+          # not create them at all, and control stays with the supercall the module's own tools use.
+          grep -qx 'bool susfs_expose_proc = true;' susfs-src/kernel/susfs_main.c || {
+            echo "::error::upstream moved the expose_proc default; this variant must not ship the control nodes"
+            exit 1
+          }
+          sed -i 's/^bool susfs_expose_proc = true;$/bool susfs_expose_proc = false;/' susfs-src/kernel/susfs_main.c
+          grep -qx 'bool susfs_expose_proc = false;' susfs-src/kernel/susfs_main.c || {
+            echo "::error::the expose_proc default did not change in the samsung variant"
+            exit 1
+          }
+          echo "control nodes: expose_proc defaults to false"
 
       - name: Build susfs_guard_lkm.ko
         run: |

@@ -257,6 +257,9 @@ jobs:
           # exists and answers ENOENT to `stat` is still openable through O_PATH, and readlinkat on the
           # pinned fd still resolves it - which is what the public detectors read. So this variant does
           # not create them at all, and control stays with the supercall the module's own tools use.
+          # Upstream ships this file CRLF (406 CRLF lines at ba5c6d00), so an exact-line match cannot see
+          # it on a Linux runner. Normalising the copy is the only change made to it here.
+          sed -i 's/\r$//' susfs-src/kernel/susfs_main.c
           grep -qx 'bool susfs_expose_proc = true;' susfs-src/kernel/susfs_main.c || {
             echo "::error::upstream moved the expose_proc default; this variant must not ship the control nodes"
             exit 1

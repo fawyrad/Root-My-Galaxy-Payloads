@@ -254,6 +254,10 @@ jobs:
           # rely on. With no node created there is nothing to open, nothing to list and nothing to leak,
           # and control stays with the supercall the manager already uses.
           file=KernelSU/kernel/susfs/susfs_main.c
+          # Upstream ships this file CRLF (406 CRLF lines at ba5c6d00), so an exact-line match cannot see
+          # it on a Linux runner - the first attempt at this step failed for that reason, not because the
+          # default had moved. Normalising the merged copy is the only change made to it here.
+          sed -i 's/\r$//' "$file"
           grep -qx 'bool susfs_expose_proc = true;' "$file" || {
             echo "::error::$file no longer declares the true default; upstream moved it and this build would ship the control nodes"
             exit 1

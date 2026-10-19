@@ -274,12 +274,14 @@ jobs:
           # Upstream reaches both from a sys_call_table wrapper installed with ksu_patch_text. This
           # kernel refuses that write, so none of its thirteen entries install (kstat_hooks_armed
           # stays 0) and the stat spoofing and the listing rewrite are dead. Our overlay runs
-          # upstream's own post-processing from a sys_exit tracepoint instead: no table entry is
-          # touched, and it arms only when the wrapper path installed nothing, so a kernel that can
-          # patch keeps the cheaper wrappers and no call is post-processed twice.
+          # upstream's own post-processing from kretprobes on the syscall entry functions instead: no
+          # table entry is touched, and it arms only when the wrapper path installed nothing, so a
+          # kernel that can patch keeps the cheaper wrappers and no call is post-processed twice.
+          # Not a sys_exit tracepoint: this kernel has no syscalls tracepoint group at all, which the
+          # first version of this step armed and silently never fired.
           set -eu
           tp=KernelSU/kernel/susfs
-          cp susfs-lkm/susfs_tp_stat.c "$tp/susfs_tp_stat.c"
+          cp susfs-lkm/susfs_kp_stat.c "$tp/susfs_kp_stat.c"
           # Upstream's post-processing is static because only its wrapper tails call it; the overlay
           # is a second caller, so it is exported - with the declaration the overlay carries.
           sed -i 's/^static __nocfi void susfs_kstat_post(/__nocfi void susfs_kstat_post(/' "$tp/susfs_kstat.c"
@@ -287,18 +289,18 @@ jobs:
             echo "::error::susfs_kstat_post() is still static - the tracepoint overlay cannot call it"; exit 1; }
           # The wrapper count, and the overlay's two entry points declared beside it - right above the
           # first place either is used, which is this file's init.
-          sed -i 's/^static int kstat_hooks_armed;$/extern int susfs_tp_stat_init(void);\nextern void susfs_tp_stat_exit(void);\n\nint kstat_hooks_armed;/' "$tp/susfs_kstat.c"
+          sed -i 's/^static int kstat_hooks_armed;$/extern int susfs_kp_stat_init(void);\nextern void susfs_kp_stat_exit(void);\n\nint kstat_hooks_armed;/' "$tp/susfs_kstat.c"
           grep -qx 'int kstat_hooks_armed;' "$tp/susfs_kstat.c" || {
             echo "::error::kstat_hooks_armed is still static - the overlay cannot see whether the wrappers armed"; exit 1; }
-          grep -q '^extern int susfs_tp_stat_init(void);' "$tp/susfs_kstat.c" || {
+          grep -q '^extern int susfs_kp_stat_init(void);' "$tp/susfs_kstat.c" || {
             echo "::error::the overlay's prototypes did not land in susfs_kstat.c"; exit 1; }
-          sed -i 's/^\([[:space:]]*\)if (!kstat_hooks_armed) {/\1susfs_tp_stat_init();\n\1if (!kstat_hooks_armed) {/' "$tp/susfs_kstat.c"
-          grep -q '^[[:space:]]*susfs_tp_stat_init();' "$tp/susfs_kstat.c" || {
+          sed -i 's/^\([[:space:]]*\)if (!kstat_hooks_armed) {/\1susfs_kp_stat_init();\n\1if (!kstat_hooks_armed) {/' "$tp/susfs_kstat.c"
+          grep -q '^[[:space:]]*susfs_kp_stat_init();' "$tp/susfs_kstat.c" || {
             echo "::error::susfs_kstat_init() does not call the tracepoint overlay"; exit 1; }
-          sed -i 's/^\([[:space:]]*\)kstat_maps_disarm();$/\1susfs_tp_stat_exit();\n\n\1kstat_maps_disarm();/' "$tp/susfs_kstat.c"
-          grep -q '^[[:space:]]*susfs_tp_stat_exit();' "$tp/susfs_kstat.c" || {
+          sed -i 's/^\([[:space:]]*\)kstat_maps_disarm();$/\1susfs_kp_stat_exit();\n\n\1kstat_maps_disarm();/' "$tp/susfs_kstat.c"
+          grep -q '^[[:space:]]*susfs_kp_stat_exit();' "$tp/susfs_kstat.c" || {
             echo "::error::susfs_kstat_exit() does not tear the tracepoint overlay down"; exit 1; }
-          echo "tp_stat overlay: in place, post-processing on sys_exit"
+          echo "kp_stat overlay: in place, post-processing on kretprobes"
 
       - name: One module, one init, and one exit
         run: |

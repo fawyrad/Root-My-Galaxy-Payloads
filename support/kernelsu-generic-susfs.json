@@ -8,8 +8,8 @@
       ],
       "daemon": {
         "url": "https://raw.githubusercontent.com/rushiranpise/Root-My-Galaxy-Payloads/main/kernelsu/ksud-next-generic-susfs-android15-6.6",
-        "size": 6990544,
-        "sha256": "e5ccf013fe7283d119b673f75f3d092bcea7f3b028a6acab871942cf4c601240",
+        "size": 7019472,
+        "sha256": "606ecb372aab2b6ff981841d2b1d7dc21953e88b95fb274fe02f8d8a0c901c23",
         "version": "3.4.2"
       },
       "susfs": true

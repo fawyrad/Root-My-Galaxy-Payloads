@@ -47,7 +47,7 @@ on:
       susfs_ref:
         description: 'Upstream susfs commit to merge in'
         required: false
-        default: '85ef920ccf27682a2a9089b4676547f691b92828'
+        default: 'ba5c6d00977719f43cc827d362374a192c0e5c1a'
       kmi:
         description: 'KMI to build for'
         required: false
@@ -75,7 +75,11 @@ permissions:
 env:
   SUSFS_REPO: inforcqb/susfs4ksu-lkm
   KSU_REF: ${{ inputs.ksu_ref || 'v3.4.2' }}
-  SUSFS_REF: ${{ inputs.susfs_ref || '85ef920ccf27682a2a9089b4676547f691b92828' }}
+  # Pinned rather than branch-following, which is where this differs from the tier's variants: a merge is
+  # a build, and a moving ref would make a daemon's provenance a different answer every dispatch. This
+  # pin is the control-node su-gate work (#106, #109) and leaves `kernel/lsm_hook.c` untouched, so the
+  # `samsung` overlay's surface still fits it; the DDK run is what proves the merge compiles.
+  SUSFS_REF: ${{ inputs.susfs_ref || 'ba5c6d00977719f43cc827d362374a192c0e5c1a' }}
   # Follows the tag rather than naming one, which is what `ksu-build.yml` does with the same value: a
   # run for a release nobody has built before used to fail at the patch step with a file that is not
   # there, and the fix is a name derived from the input rather than an edit to this line.

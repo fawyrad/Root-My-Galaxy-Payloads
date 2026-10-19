@@ -48,6 +48,23 @@
  * where those install; the devices this layer exists for run 64-bit app processes, and a compat
  * kretprobe needs a symbol (`__arm_compat_sys_*`) whose naming differs per tree.  A 32-bit caller
  * therefore gets no spoofing here rather than a guess.
+ *
+ * ## Measured on the device (2026-10-19, SM-S938U1, 6.6.127)
+ *
+ * Armed: three of the four probes - `__arm64_sys_newfstatat`, `__arm64_sys_statx` and
+ * `__arm64_sys_getdents64` appear in `/sys/kernel/debug/kprobes/list` with the return flag.  With a
+ * static sus_kstat rule on a root-owned file, uid 10359 read the spoofed size (123456789) while root
+ * read the real 6; with a sus_path rule on one name in a two-file directory, uid 10359's `ls` showed
+ * only the other name and `cat` of the hidden one answered ENOENT, while root saw both.  Before the
+ * pt_regs fix the same tests showed the real size and the full listing, with `sus_path: dirent
+ * rewrite stopped at 0/N bytes (returned N)` in the ring - the filter running against a garbage
+ * buffer.
+ *
+ * Not covered, measured: `__arm64_sys_fstat` does not register - it is absent from the kprobe list and
+ * its per-probe warning is the only trace of it.  `fstat` is therefore not spoofed here; newfstatat
+ * and statx are, which is what `stat` and `ls` use.  Whether the symbol exists under another name
+ * could not be settled: /proc/kallsyms was denied to the shell and read as empty from the root session
+ * the probe list was taken in.
  */
 
 #include <linux/kernel.h>

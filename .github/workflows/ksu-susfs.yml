@@ -61,6 +61,11 @@ on:
         required: false
         type: boolean
         default: false
+      sus_path_without_lsm:
+        description: 'Skip the sus_path LSM call-site check, for a ref that hides through a dcache whiteout'
+        required: false
+        type: boolean
+        default: false
   push:
     paths:
       - 'susfs-lkm/**'
@@ -125,6 +130,8 @@ jobs:
           python3 tools/check_rkp_branch.py --tree KernelSU
 
       - name: Merge their sources, with our hook layer
+        env:
+          SUS_PATH_NO_LSM: ${{ inputs.sus_path_without_lsm }}
         run: |
           set -eu
           mkdir -p KernelSU/kernel/susfs
@@ -229,8 +236,15 @@ jobs:
           # The two callers, by file: `sus_path.c` registers the hooks, `susfs_main.c` owns the layer,
           # and both names are checked so a rename that missed one side fails here rather than at the
           # link - or worse, silently against KernelSU's own implementation.
-          grep -q "susfs_register_lsm_hook" KernelSU/kernel/susfs/sus_path.c || {
-            echo "::error::sus_path.c does not call the namespaced layer"; exit 1; }
+          # A ref that hides through a dcache whiteout has no LSM layer in sus_path.c at all, so the
+          # call-site check cannot hold for it. Opted into explicitly, because the normal build must
+          # not silently lose the guard.
+          if [ "${SUS_PATH_NO_LSM:-}" = "true" ]; then
+            echo "sus_path: no LSM layer expected (whiteout ref)"
+          else
+            grep -q "susfs_register_lsm_hook" KernelSU/kernel/susfs/sus_path.c || {
+              echo "::error::sus_path.c does not call the namespaced layer"; exit 1; }
+          fi
           grep -q "susfs_lsm_hook_init" KernelSU/kernel/susfs/susfs_main.c || {
             echo "::error::susfs_main.c does not call the namespaced layer"; exit 1; }
           if grep -qE "\bksu_register_lsm_hook\(|\bksu_lsm_hook_init\(" KernelSU/kernel/susfs/*.c; then

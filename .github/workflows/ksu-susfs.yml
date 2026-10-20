@@ -66,6 +66,11 @@ on:
         required: false
         type: boolean
         default: false
+      no_try_umount:
+        description: "Skip the try_umount wiring, for a ref whose command whitelist does not carry it"
+        required: false
+        type: boolean
+        default: false
   push:
     paths:
       - 'susfs-lkm/**'
@@ -429,6 +434,10 @@ jobs:
           tail -4 "$kbuild"
 
       - name: Wire try_umount (CONFIG_KSU_SUSFS_TRY_UMOUNT)
+        # A ref that narrows its handled-command list (upstream's sus_path test build handles only
+        # sus_path) has no CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS case left to anchor the wiring, so
+        # the feature is left out rather than patched into a tree that does not advertise it.
+        if: ${{ !inputs.no_try_umount }}
         run: |
           set -eu
           # Our layer, plus the edits that make it reachable: a command id the caller's helper sends,

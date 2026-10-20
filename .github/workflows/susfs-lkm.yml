@@ -78,6 +78,15 @@ on:
         required: false
         type: boolean
         default: false
+      ref:
+        description: "Build this branch or commit instead of the variant's pin, for a test build"
+        required: false
+        default: ''
+      no_overlays:
+        description: "Skip this repository's hook and kp_stat layers, building upstream's tree as it is"
+        required: false
+        type: boolean
+        default: false
       url_prefix:
         description: 'Raw-URL prefix the feed serves artifacts from'
         required: false
@@ -171,11 +180,18 @@ jobs:
           set -eu
           REF=$(python3 -c "import json,os;print(json.loads(os.environ['SUSFS_REFS'])[os.environ['VARIANT']])")
           VERSION=$(python3 -c "import json,os;v=json.loads(os.environ['SUSFS_VERSIONS'])[os.environ['VARIANT']];print('' if v is None else v)")
+          # A test build names its own ref. Recorded the same way a branch is, so the feed still says
+          # which source the artifact came from - the publish reads it from the manifest.
+          if [ -n "${REF_OVERRIDE:-}" ]; then
+            echo "ref override: $REF -> $REF_OVERRIDE (test build)"
+            REF="$REF_OVERRIDE"
+          fi
           echo "VARIANT_REF=$REF" >> "$GITHUB_ENV"
           echo "VARIANT_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "variant $VARIANT: $SUSFS_REPO@$REF (version ${VERSION:-<none>})"
         env:
           VARIANT: ${{ matrix.variant }}
+          REF_OVERRIDE: ${{ inputs.ref }}
 
       - name: Checkout the susfs sources at that commit
         uses: actions/checkout@v7
@@ -208,7 +224,7 @@ jobs:
           fi
 
       - name: The overlay still fits the tree it is about to be compiled into
-        if: matrix.variant == 'samsung'
+        if: matrix.variant == 'samsung' && !inputs.no_overlays
         run: |
           # `lsm_hook.c` here is written against upstream's `lsm_hook.h`: the struct, the insert
           # initialiser, and the four entry points it defines. Followed by a branch, that header can
@@ -232,7 +248,7 @@ jobs:
           echo "overlay surface present in $header ($(git -C susfs-src rev-parse --short HEAD))"
 
       - name: This repository's hook layer, where the variant is the Samsung one
-        if: matrix.variant == 'samsung'
+        if: matrix.variant == 'samsung' && !inputs.no_overlays
         run: |
           # The one thing `samsung` is: upstream's sources with our install path in place. Upstream
           # publishes a hook by writing it into read-only `__lsm_ro_after_init` memory, which lands on
@@ -377,6 +393,9 @@ jobs:
           path: artifacts
 
       - name: Place them per variant, and write the manifest
+        env:
+          # Empty for a normal publish, so the variant's own branch is what gets resolved.
+          REF_INPUT: ${{ inputs.ref }}
         run: |
           set -eu
           # The layout is the feed's: one directory per variant, which is also what makes "all of
@@ -400,15 +419,22 @@ jobs:
           # were built, and recorded in the feed's `source.ref`: with the branch as the input, this is
           # the only thing that makes an artifact answerable to a revision.
           import subprocess
+          # A test build names its own ref (see the `ref` input). The manifest records that ref's
+          # commit rather than the variant's branch, so an artifact is still traceable to the source
+          # it was actually compiled from.
+          override = os.environ.get("REF_INPUT", "").strip()
           for variant, branch in refs.items():
-              head = subprocess.run(
-                  ["git", "ls-remote", "https://github.com/" + os.environ["SUSFS_REPO"] + ".git",
-                   "refs/heads/" + branch],
-                  capture_output=True, text=True, check=True,
-              ).stdout.split()
+              ref = override or branch
+              url = "https://github.com/" + os.environ["SUSFS_REPO"] + ".git"
+              head = subprocess.run(["git", "ls-remote", url, "refs/heads/" + ref],
+                                    capture_output=True, text=True, check=True).stdout.split()
+              # An override may be a raw commit rather than a branch; the same query does not answer it.
+              if not head and override:
+                  head = subprocess.run(["git", "ls-remote", url, ref],
+                                        capture_output=True, text=True, check=True).stdout.split()
               if not head:
-                  raise SystemExit(f"upstream has no branch {branch} for variant {variant}")
-              print(f"{variant}: {branch} -> {head[0][:12]}")
+                  raise SystemExit(f"upstream has no branch {ref} for variant {variant}")
+              print(f"{variant}: {ref} -> {head[0][:12]}")
               refs[variant] = head[0]
 
           records = {}
